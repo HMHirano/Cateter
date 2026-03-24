@@ -1,0 +1,57 @@
+1. O arquivo step_detection mostra um código que conseguiu captar com precisão todos os flsuh tests mesmo
+utilizando uma derivada negativa na descida. No entanto, quando foi utliizado o mesmo código no vital db,
+a presença de ruído é muito mais marcante, e a derivada como critério perde sua força, sendo necessária
+utilizá-la para diferenciar apenas as subidas exponenciais do que a convolução chama de degrau.
+
+2. Outro diferença que diminuiu a precisão do algoritmo foi o offset ou pressão média do sinal no DB,
+o que afetou o critério da convolução, já que trechos com alta pressão média apresentam um valor de 
+convolução elevado, o que requer uma variação do critério conforme a pressão média.
+
+3. Uma opção para encontrar o momento de descida é pegar um momento de descida da convolução. A partir
+dos gráficos, parece estar em torno do ponto médio entre o início da descida e o começo da resposta amortecida.
+
+4. Tentando resolver o problema da pressão média ser muito alta. Considerando que utilizando 200 como
+o valor do limiar é suficiente para o flush inteiro ser grifado pela função que utiliza a convolução,
+mas acaba grifando trechos com valor médio alto, utilizando o dobro da pressão média não parece ser uma má ideia
+como limiar
+
+5. Reescrevi parte do código do cálculo da convolução utilizando mais bibliotecas do python. Passei a utilizar
+a fftconvolve que é recomendada para arrays que contenham mais de 500 elementos e usei uma funçao de onda quadrada
+ao invés de multiplicar um vetor de ones pela amplitude da ondas. Ter a descida explicitamente na onda fez uma 
+diferença considerável na precisão da convolução. Agora o novo criteŕio que pretendo adotar é encontrar os máximos
+locais de regiões com alto valor de convolução para identificar as descidas, e para diferenciar dos não flushes,
+pretendo filtrar o valor negativo da convolução no momento da subida.
+
+6. Revendo o código há três problemas:
+    1) Os picos gerados pela convolução da descida não são suficientes para filtrar degraus com subida exponencial
+    2) Caso haja flushes sucessivos, a convolução da subida não consegue detectar a subida se a função degrau for larga
+    3) A derivada deve ser usada em conjunto com a convolução para identificar subidas
+
+7, Feitas alterações, as condições anteriores foram satisfeitas, mas está dando problema em utilizar a derivada normalizada,
+já que vários pontos que são subidas de flush não estão sendo considerados. Além disso, há sinais semelhantes a flushes
+mas que não produzem nenhum tipo de resposta de 2°ordem quando descem e, de fato, não possuem sinais cardiogênicos em cima
+desse suposto flush ou após o sinal, então duas condições de interesse são:
+    1) Não utilizar a derivada normalizada
+    2) Verificar a presença de sinais cardiogênicos
+    3) Diminuir o tempo do que seria considerado um flush para 3 segundos
+
+8. A presença de sinais cardiogênicos deve filtrar boa parte dos sinais que não sejam flush ou que não produzem uma
+resposta de 2°ordem, e dessa maneira os valores das condições, seja do valor mínimo do signal_raw_filtered, da derivada
+e da convolução podem ser suavizados ou afrouxados, evitando erros de falso negativo(Tipo II). A duração maior do que 
+3 segundos consegue evitar falsos positivos mas o critério dos sinais cardiogênicos permite uma filtragem mais consistente
+e permite que flushes com menos de 3 segundos, como alguns vistos no caseID_7, sejam utilizados ao diminuir para 2.5s ou 
+2s o tempo utilizado como limiar entre flush e não flush.
+
+9. Passei a utilizar um valor da derivada não normalizado obtido de um dicionário que eu criei para armazenar os valores das
+derivadas quando ainda utilizava a normalização. Como na normalização tinha uma taxa de acerto alta, serviu como uma estimativa
+para o novo valor a ser utilizado. Agora, está em torno de 15 o limiar para considerar a derivada. Também, criei um dataframe com
+a quantidade de máximos que atendiam a condição de subida, descida e que se enquadravam como flush. Tentei verificar a presença de
+sinais cardiogênicos entre a subida e a descida mas não consegui um resultado muito bom porque o instante considerado o momento da
+subida não costuma ser no pontos mais alto do flush, o que gera inconsistências e às vezes sinais não apresentam nenhum sinal
+cardiogênico e mesmo assim possuem uma resposta amortecida. Cheguei a cogitar se a presença de sinais cardiogênicos ou a duração do
+flush afetariam o tipo de resposta do sistema(mais ou menos amortecido). Uma maneira menos criteriosa mas que filtraria falso positivos
+seria verificar se não haveria alguma oscilação muito grande na onda(como descer abaixo de 0.4), mas não estava conseguindo fazer isso 
+no código.
+
+
+
