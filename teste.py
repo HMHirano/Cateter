@@ -21,7 +21,7 @@ STEP_DETECTION_THRESHOLD = "definido na função"     # Limiar para detectar o d
 SIGNAL_THRESHOLD = 200
 DERIVATIVE_THRESHOLD_ASCENT = 180 / (0.5 * SAMPLE_RATE)    # Limiar inferior para a derivada, equivale a 180mmHg/0.5s
 #DERIVATIVE_THRESHOLD_ASCENT = 0.03                      # Limiar inferior para a derivada   
-DERIVATIVE_THRESHOLD_DESCENT = -0.1                       # Limiar superior para a derivada
+DERIVATIVE_THRESHOLD_DESCENT = -0.2                       # Limiar superior para a derivada
 dt = 1.0 / SAMPLE_RATE
 
 
@@ -36,7 +36,7 @@ snuadc_art_cases = df_trks[df_trks['tname'] == 'SNUADC/ART']['caseid'].unique()
 
 # Exibe a quantidade e os primeiros 20 IDs como exemplo
 print(f"Total de casos com SNUADC/ART: {len(snuadc_art_cases)}")
-print(f"Exemplos de IDs: {snuadc_art_cases[:20]}")
+print(f"Exemplos de IDs: {snuadc_art_cases[:40]}")
 
 # Se quiser salvar em um arquivo:
 pd.DataFrame(snuadc_art_cases, columns=['caseid']).to_csv('casos_art.csv')
@@ -48,7 +48,7 @@ data_ids = []
 #     idx,sub,des,asc,desc,conv = flush_detector(file_number, "resultados_detector")
 #     data_ids.append(idx)
 
-file_number = snuadc_art_cases[27]
+file_number = snuadc_art_cases[0]
 folder_name = "resultados_detector"
 print("Executando flush detector da sessão ",file_number)
 
@@ -97,9 +97,9 @@ def normalize_robust_and_saturation(sig):
     return sig / max_val if max_val != 0 else sig
 
 ### NORMALIZATION
-signal_raw_filtered = np.array(signal_raw_filtered / max(signal_raw_filtered))
+norm_signal = filtered = np.array(signal_raw_filtered / max(signal_raw_filtered))
 convolution = np.array(convolution / max(convolution)) #normalize_robust_and_saturation(convolution)
-norm_der = np.array(derivative / max(derivative)) #normalize_robust_and_saturation(derivative)
+norm_der = normalize_robust_and_saturation(derivative)
 
 #%%
 ### ESPECTROGRAMA DO SINAL
@@ -149,7 +149,7 @@ plt.show()
 #%%
 ### CONDIÇÕES
 #Subida da pressão
-condition_ascent = (convolution < -0.35) & (derivative > DERIVATIVE_THRESHOLD_ASCENT) & (signal_raw_filtered > 0.4)
+condition_ascent = (convolution < -0.35) & (derivative > DERIVATIVE_THRESHOLD_ASCENT) & (norm_signal > 0.4)
 ascent = np.where(condition_ascent)[0]
 abs_ascent_idx = []
 if len(ascent) != 0:
@@ -164,11 +164,11 @@ if len(ascent) != 0:
 # abs_ascent_idx = ascent[rel_ascent_idx]
 
 # Descida da pressão
-condition_descent = (convolution > 0.2) & (norm_der < DERIVATIVE_THRESHOLD_DESCENT)
+condition_descent = (convolution > 0.15) & (norm_der < DERIVATIVE_THRESHOLD_DESCENT)
 descent = np.where(condition_descent)[0]
 #rel_descent_idx = argrelextrema(convolution[descent], np.greater)[0]
-rel_descent_idx = find_peaks(convolution[descent])[0]
-abs_descent_idx = descent[rel_descent_idx]
+# rel_descent_idx = find_peaks(convolution[descent])[0]
+# abs_descent_idx = descent[rel_descent_idx]
 
 try:
     with open(f"{folder_name}/derivative.json", "r") as f:
@@ -189,6 +189,40 @@ except Exception:
 else:
     print("resultados.csv existe")
 
+#%%
+
+detecSimples = []
+subSalva = False
+sub = 0  # Inicializa a variável para evitar erros de referência
+
+# Definindo os limiares da histerese
+THRESHOLD_HIGH = 180  # Valor para detectar o início do flush (subida)
+THRESHOLD_LOW = 170   # Valor para decretar o fim do flush (descida)
+
+for idx in range(0, len(signal_raw_filtered)):
+    valor_atual = signal_raw_filtered[idx]
+    
+    # 1. Detecta a SUBIDA: o sinal cruza o limiar superior
+    if (valor_atual >= THRESHOLD_HIGH) and (not subSalva):
+        print(f"Subida detectada no índice {idx} (Valor: {valor_atual:.1f})")
+        sub = idx
+        subSalva = True
+        
+    # 2. Detecta a DESCIDA: o sinal cai abaixo do limiar inferior
+    elif (valor_atual < THRESHOLD_LOW) and subSalva:
+        print(f"Descida detectada no índice {idx} (Valor: {valor_atual:.1f})")
+        des = idx
+        deltaT = des - sub
+        
+        # 3. Valida a janela de tempo (entre 1s e 19s)
+        if (deltaT > 1 * SAMPLE_RATE) and (deltaT < 19 * SAMPLE_RATE):
+            print(f"-> Trecho válido adicionado! Duração: {deltaT/SAMPLE_RATE:.2f}s")
+            detecSimples.append([sub, des])
+        else:
+            print(f"-> Descartado: deltaT = {deltaT/SAMPLE_RATE:.2f}s fora da janela especificada.")
+            
+        # 4. Reseta a flag para procurar o próximo evento
+        subSalva = False
 
 #%%
 # Pareia subida com descida, demarcando início e fim do flush
@@ -196,10 +230,10 @@ step =[]
 condition = []
 der_values = []
 for asc in abs_ascent_idx:
-    for desc in abs_descent_idx:
+    for desc in descent:
         if asc < desc:
             print(f"Comparação entre asc:{asc} e desc:{desc}")
-            if (desc-asc) > 1*SAMPLE_RATE and (desc-asc) < 45*SAMPLE_RATE: # flush deve durar mais que 3s e menos que 30s
+            if (desc-asc) > 1*SAMPLE_RATE:# and (desc-asc) < 45*SAMPLE_RATE: # flush deve durar mais que 3s e menos que 30s
                 #condition_stability = np.where(convolution[asc:desc] < 0.6*max(convolution[asc:desc]))[0]
                 #print(f"max: {max(convolution[asc:desc])}")
                 #condition.append(condition_stability)
@@ -209,14 +243,14 @@ for asc in abs_ascent_idx:
             else:
                 if (desc-asc) < 1*SAMPLE_RATE:
                     print(f"desc-asc não é maior que 1s: {desc-asc}")
-                elif (desc-asc) > 45*SAMPLE_RATE:
-                    print(f"desc-asc maior que 45s: {desc-asc}")
+                #elif (desc-asc) > 45*SAMPLE_RATE:
+                #    print(f"desc-asc maior que 45s: {desc-asc}")
                 break
         
 # Filtra oscilações acentuadas no meio do flush ou ruído simplesmente
-step = [ele for ele in step if not np.any(signal_raw_filtered[ele[0]:ele[1]] < 0.3)]
+step = [ele for ele in step if not np.any(norm_signal[ele[0]:ele[1]] < 0.3)]
 
-data = {"num_flush-like": len(abs_descent_idx), "num_true-flush": len(step), "num_false_flush":len(abs_descent_idx) - len(step)}
+data = {"num_flush-like": len(descent), "num_true-flush": len(step), "num_false_flush":len(descent) - len(step)}
 try:
     resultados.loc[f"caseID_{file_number}"] = data
     print(resultados)
@@ -257,11 +291,11 @@ with open(f"{folder_name}/derivative.json", "w") as f:
 # b, a = signal.bessel(order, Wn, btype='low', analog=False, output='ba')
 # for sub,des in step:
 #     t = time[des:des+50]    
-#     resp = signal_raw_filtered[des:des+50]
+#     resp = norm_signal[des:des+50]
 #     cs = CubicSpline(t, resp)
 #     inter = cs(t_spline + time[des])
 #     interpolation.append(inter)
-#     idx_picos = find_peaks(inter, prominence=0.05)[0] # indices no signal_raw_filtered
+#     idx_picos = find_peaks(inter, prominence=0.05)[0] # indices no norm_signal
 #     idx_vales = find_peaks(-inter, prominence=0.05)[0]
 #     #if inter[idx_picos[0]] > inter[idx_picos[0]]: # resposta amortecida
 #     A1 = (inter[idx_picos[0]] - inter[idx_vales[1]]) * max(signal_raw_filtered)
@@ -269,7 +303,7 @@ with open(f"{folder_name}/derivative.json", "w") as f:
 #     ksi.append((-1) * math.log((A1/A2)/np.sqrt((math.pi ** 2) + (math.log(A2/A1)) ** 2)))
 #     freq.append(1 / ((idx_vales[1] - idx_vales[0]) / (SAMPLE_RATE * 5))) # Vezes 5 por causa do t_spline
 #     #else: # resposta não-amortecida
-#     ln_Mp = math.log(abs(inter[idx_vales[0]] - inter[idx_vales[-1]]) * max(signal_raw_filtered)) # Pensando que é uma descida, ordem dos termos inverte
+#     ln_Mp = math.log(abs(inter[idx_vales[0]] - inter[idx_vales[-1]]))) # Pensando que é uma descida, ordem dos termos inverte
 #     ksi_Mp.append( -ln_Mp / (ln_Mp**2 + math.pi**2))
 #     freq_ts.append(3 / (ksi_Mp[-1] * (idx_vales[-1] / (SAMPLE_RATE * 5))))
 #     picos.append(idx_picos)
@@ -320,12 +354,12 @@ for i in range(0, len(step), 3):
         idx = i + j
         if idx < len(step):
             start_pos = max(0, step[idx][1] - 20*SAMPLE_RATE)
-            end_pos = min(len(signal_raw_filtered), step[idx][1] + 20*SAMPLE_RATE)
+            end_pos = min(len(norm_signal), step[idx][1] + 20*SAMPLE_RATE)
             t = time[start_pos:end_pos]
-            ax.plot(time[start_pos:end_pos], signal_raw_filtered[start_pos:end_pos], label='signal', linewidth=1)
+            ax.plot(time[start_pos:end_pos], norm_signal[start_pos:end_pos], label='signal', linewidth=1)
             ax.plot(time[start_pos:end_pos], convolution[start_pos:end_pos], label='convolution', linewidth=1)
-            ax.plot(time[start_pos:end_pos], norm_der[start_pos:end_pos], label='norm_der', linewidth=1)
-            ax.vlines(time[step[idx][1]],0,1)
+            ax.plot(time[start_pos:end_pos], norm_der[start_pos:end_pos], label='norm_der', linewidth=1, alpha=0.3)
+            ax.vlines(time[step[idx][1]],0,1, color='r')
             # time_spline = t_spline + time[step[idx][1]]
             # time_resp = time[step[idx][1]:step[idx][1]+50]
             # ax.scatter(time_spline[picos[idx]], interpolation[idx][picos[idx]], label='Picos')
