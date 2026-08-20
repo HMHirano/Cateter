@@ -1,0 +1,6 @@
+Coisas para fazer na IC:
+- Acompanhar que pacientes e hospitais estão no conjunto de treino e validação
+- Quais features estão sendo removidas no VIF pois isso afeta a interpretação do problemas
+- Critério de seleção de casos no VitalDB e MIMIC (aleatório?)
+- Entender a distribuição das amostras no boxplot, verificar se as amostras que são outliers em uma distribuição estão contidos nos quartis de 25 a 75% por exemplo
+- 
